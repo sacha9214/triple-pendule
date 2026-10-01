@@ -1,0 +1,452 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Triple pendule inversé</title>
+<meta name="description" content="Un chariot peut-il équilibrer trois pendules ? Simulation physique en direct avec régulateur LQR.">
+<style>
+:root{
+  --bg:#ffffff; --panel:#f6f7f9; --ink:#15181d; --muted:#6b7280; --grid:#d9dce1; --axis:#4b5563;
+  --l1:#d6323a; --l2:#1f9e7a; --l3:#3a86c8; --motor:#e0694a; --push:#5b4bb0; --energy:#4a8fc4;
+  --cart:#23262d; --joint:#ffffff; --accent:#15181d; --ok:#1f9e7a; --warn:#d98a1c; --bad:#d6323a;
+}
+@media (prefers-color-scheme: dark){
+  :root{
+    --bg:#0f1115; --panel:#181b21; --ink:#eceef1; --muted:#9aa1ac; --grid:#2a2f38; --axis:#aab1bb;
+    --l1:#ef5a61; --l2:#35c298; --l3:#5aa6e6; --motor:#f08a6c; --push:#9a8cf0; --energy:#6fb0e2;
+    --cart:#d5d8de; --joint:#0f1115; --accent:#eceef1;
+  }
+}
+*{box-sizing:border-box}
+html,body{margin:0}
+body{background:var(--bg);color:var(--ink);font:16px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif}
+main{max-width:980px;margin:0 auto;padding:28px 16px 64px}
+h1{font-size:clamp(1.5rem,4.5vw,2.3rem);line-height:1.15;margin:0 0 6px;text-align:center;letter-spacing:-.01em}
+.sub{text-align:center;color:var(--muted);margin:0 0 20px}
+canvas{display:block;width:100%}
+.plot{height:150px}
+.stage{position:relative;margin:6px 0}
+.hud{position:absolute;top:10px;pointer-events:none}
+.hud.left{left:12px}
+.hud.right{right:12px;text-align:right;font-weight:700;font-variant-numeric:tabular-nums;line-height:1.75}
+#status{font-weight:800;font-size:clamp(1rem,3vw,1.35rem);letter-spacing:.02em}
+#clock{font-family:ui-monospace,Menlo,Consolas,monospace;color:var(--muted);margin-top:4px}
+.t1{color:var(--l1)}.t2{color:var(--l2)}.t3{color:var(--l3)}
+.controls{display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:center;background:var(--panel);border-radius:12px;padding:12px;margin-top:14px}
+button,select{font:inherit;color:var(--ink);background:var(--bg);border:1px solid var(--grid);border-radius:8px;padding:8px 14px;cursor:pointer}
+button:hover{border-color:var(--axis)}
+button.primary{background:var(--accent);color:var(--bg);border-color:var(--accent);font-weight:600}
+button[aria-pressed="false"]{color:var(--bad);border-color:var(--bad)}
+label{display:flex;align-items:center;gap:8px;color:var(--muted);font-size:.92rem}
+input[type=range]{width:120px;accent-color:var(--push)}
+output{color:var(--ink);font-variant-numeric:tabular-nums;min-width:3.2em}
+.hint{text-align:center;color:var(--muted);font-size:.88rem;margin:10px 0 0}
+section{margin-top:44px}
+h2{font-size:1.25rem;margin:0 0 10px}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:14px}
+.card{background:var(--panel);border-radius:12px;padding:16px}
+.card h3{margin:0 0 6px;font-size:1rem}
+.card p{margin:0;color:var(--muted);font-size:.94rem}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.9em}
+footer{margin-top:40px;color:var(--muted);font-size:.85rem;text-align:center}
+</style>
+</head>
+<body>
+<main>
+  <h1>Un chariot peut-il équilibrer trois pendules ?</h1>
+  <p class="sub">Simulation physique en direct. Un seul moteur, quatre degrés de liberté, zéro triche.</p>
+
+  <canvas id="cEnergy" class="plot" aria-label="Énergie des pendules au cours du temps"></canvas>
+  <div class="stage">
+    <canvas id="cScene" aria-label="Chariot et pendules"></canvas>
+    <div class="hud left"><div id="status">—</div><div id="clock">0.00 s</div></div>
+    <div class="hud right" id="angles"></div>
+  </div>
+  <canvas id="cForce" class="plot" aria-label="Force du moteur et poussées au cours du temps"></canvas>
+
+  <div class="controls">
+    <button id="bL" class="primary">← Pousser</button>
+    <button id="bR" class="primary">Pousser →</button>
+    <label>Force <input id="rPush" type="range" min="5" max="60" step="1" value="20"><output id="oPush">20 N</output></label>
+    <label>Pendules
+      <select id="sN"><option value="1">1</option><option value="2">2</option><option value="3" selected>3</option></select>
+    </label>
+    <button id="bMotor" aria-pressed="true">Moteur : ON</button>
+    <button id="bPause">Pause</button>
+    <button id="bReset">Réinitialiser</button>
+  </div>
+  <p class="hint">Clique dans la scène à gauche ou à droite du chariot pour le pousser · touches ← → · R pour réinitialiser</p>
+
+  <section>
+    <h2>Comment ça tient debout</h2>
+    <div class="cards">
+      <div class="card"><h3>Le problème</h3><p>Trois tiges articulées, posées en équilibre sur un chariot. La seule commande est une force horizontale sur le chariot, limitée à ±40 N. Le système est instable et sous-actionné : un moteur pour quatre degrés de liberté.</p></div>
+      <div class="card"><h3>La physique</h3><p>Les équations de Lagrange complètes (non linéaires) sont intégrées par Runge-Kutta 4 à 1000 Hz. Masses ponctuelles de 200 g aux articulations, tiges de 28 cm, chariot de 1 kg, un peu de frottement.</p></div>
+      <div class="card"><h3>Le régulateur</h3><p>Un LQR : le modèle est linéarisé autour de la verticale, puis l'équation de Riccati discrète est résolue dans ton navigateur au chargement. La force vaut <code>u = −K·état</code>, recalculée 250 fois par seconde.</p></div>
+      <div class="card"><h3>Ses limites</h3><p>Le LQR ne vaut que près de la verticale. Pousse trop fort, sature le moteur ou envoie le chariot en butée, et tout s'effondre. Il n'y a pas de remontée automatique (swing-up) : après une chute, la simulation repart d'en haut.</p></div>
+    </div>
+  </section>
+  <footer>Inspiré d'une animation « Can one cart balance three pendulums? ». Tout est calculé côté navigateur, sans bibliothèque.</footer>
+</main>
+
+<script>
+//CORE-START
+const G = 9.81, DT = 0.001, SUB = 4, DTC = DT * SUB, FMAX = 40, XMAX = 2;
+// Inclinaison initiale max (degrés) : le bassin d'attraction rétrécit vite avec le nombre de tiges.
+const INIT_TILT = [4, 1.5, 0.6];
+
+function makeParams(n) {
+  const m = Array(n).fill(0.2), l = Array(n).fill(0.28), mu = Array(n).fill(0);
+  for (let j = n - 1, acc = 0; j >= 0; j--) { acc += m[j]; mu[j] = acc; }
+  return { n, M: 1, m, l, mu, b: 0.002, bc: 0.3 };
+}
+
+// Résout A·x = r par élimination de Gauss avec pivot partiel (en place).
+function solve(A, r) {
+  const n = r.length;
+  for (let c = 0; c < n; c++) {
+    let p = c;
+    for (let i = c + 1; i < n; i++) if (Math.abs(A[i][c]) > Math.abs(A[p][c])) p = i;
+    if (p !== c) { [A[c], A[p]] = [A[p], A[c]]; [r[c], r[p]] = [r[p], r[c]]; }
+    for (let i = c + 1; i < n; i++) {
+      const f = A[i][c] / A[c][c];
+      for (let k = c; k < n; k++) A[i][k] -= f * A[c][k];
+      r[i] -= f * r[c];
+    }
+  }
+  for (let i = n - 1; i >= 0; i--) {
+    for (let k = i + 1; k < n; k++) r[i] -= A[i][k] * r[k];
+    r[i] /= A[i][i];
+  }
+  return r;
+}
+
+function massMatrix(s, P) {
+  const n = P.n, N = n + 1, A = [];
+  for (let i = 0; i < N; i++) A.push(new Array(N).fill(0));
+  A[0][0] = P.M + P.mu[0];
+  for (let j = 0; j < n; j++) {
+    A[0][j + 1] = A[j + 1][0] = P.mu[j] * P.l[j] * Math.cos(s[j + 1]);
+    for (let k = 0; k < n; k++)
+      A[j + 1][k + 1] = P.mu[Math.max(j, k)] * P.l[j] * P.l[k] * Math.cos(s[j + 1] - s[k + 1]);
+  }
+  return A;
+}
+
+// État s = [x, θ1..θn, ẋ, ω1..ωn], angles absolus mesurés depuis la verticale haute.
+// f = force horizontale totale sur le chariot (moteur + poussée).
+function deriv(s, f, P) {
+  const n = P.n, N = n + 1, A = massMatrix(s, P), r = new Array(N);
+  let cen = 0;
+  for (let j = 0; j < n; j++) cen += P.mu[j] * P.l[j] * Math.sin(s[j + 1]) * s[N + j + 1] ** 2;
+  r[0] = f - P.bc * s[N] + cen;
+  for (let j = 0; j < n; j++) {
+    const w = s[N + j + 1], wPrev = j > 0 ? s[N + j] : 0;
+    let v = P.mu[j] * G * P.l[j] * Math.sin(s[j + 1]) - P.b * (w - wPrev);
+    if (j < n - 1) v += P.b * (s[N + j + 2] - w);
+    for (let k = 0; k < n; k++)
+      v -= P.mu[Math.max(j, k)] * P.l[j] * P.l[k] * Math.sin(s[j + 1] - s[k + 1]) * s[N + k + 1] ** 2;
+    r[j + 1] = v;
+  }
+  const acc = solve(A, r), ds = new Array(2 * N);
+  for (let i = 0; i < N; i++) { ds[i] = s[N + i]; ds[N + i] = acc[i]; }
+  return ds;
+}
+
+function rk4(s, f, P, h) {
+  const n = s.length, add = (a, b, c) => a.map((v, i) => v + c * b[i]);
+  const k1 = deriv(s, f, P), k2 = deriv(add(s, k1, h / 2), f, P);
+  const k3 = deriv(add(s, k2, h / 2), f, P), k4 = deriv(add(s, k3, h), f, P);
+  const o = new Array(n);
+  for (let i = 0; i < n; i++) o[i] = s[i] + h / 6 * (k1[i] + 2 * k2[i] + 2 * k3[i] + k4[i]);
+  return o;
+}
+
+function stepCtrl(s, f, P) {
+  for (let i = 0; i < SUB; i++) s = rk4(s, f, P, DT);
+  return s;
+}
+
+// Énergie mécanique des pendules, zéro = tout pendu vers le bas.
+function energy(s, P) {
+  const n = P.n, N = n + 1, A = massMatrix(s, P);
+  let T = 0, V = 0;
+  for (let i = 0; i < N; i++) for (let k = 0; k < N; k++) T += 0.5 * A[i][k] * s[N + i] * s[N + k];
+  T -= 0.5 * P.M * s[N] ** 2;
+  for (let j = 0; j < n; j++) V += P.mu[j] * G * P.l[j] * (1 + Math.cos(s[j + 1]));
+  return T + V;
+}
+function energyUpright(P) { return energy(new Array(2 * (P.n + 1)).fill(0), P); }
+
+// Gain LQR discret : linéarisation numérique du pas de commande, puis itération de Riccati.
+function lqr(P) {
+  const N = P.n + 1, S = 2 * N, eps = 1e-6, z = () => new Array(S).fill(0);
+  const Ad = [], Bd = new Array(S);
+  for (let i = 0; i < S; i++) Ad.push(new Array(S));
+  for (let j = 0; j < S; j++) {
+    const a = z(), b = z(); a[j] = eps; b[j] = -eps;
+    const sa = stepCtrl(a, 0, P), sb = stepCtrl(b, 0, P);
+    for (let i = 0; i < S; i++) Ad[i][j] = (sa[i] - sb[i]) / (2 * eps);
+  }
+  const fa = stepCtrl(z(), eps, P), fb = stepCtrl(z(), -eps, P);
+  for (let i = 0; i < S; i++) Bd[i] = (fa[i] - fb[i]) / (2 * eps);
+
+  const q = z();
+  q[0] = 30; q[N] = 3;
+  for (let j = 1; j < N; j++) { q[j] = 200; q[N + j] = 2; }
+  const R = 0.05;
+
+  let Pm = [];
+  for (let i = 0; i < S; i++) { Pm.push(z()); Pm[i][i] = q[i]; }
+  let K = z();
+  for (let it = 0; it < 40000; it++) {
+    const PA = [], PB = z();
+    for (let i = 0; i < S; i++) {
+      PA.push(z());
+      for (let k = 0; k < S; k++) {
+        const p = Pm[i][k];
+        PB[i] += p * Bd[k];
+        for (let j = 0; j < S; j++) PA[i][j] += p * Ad[k][j];
+      }
+    }
+    let den = R;
+    for (let i = 0; i < S; i++) den += Bd[i] * PB[i];
+    const Kn = z();
+    for (let j = 0; j < S; j++) { for (let i = 0; i < S; i++) Kn[j] += Bd[i] * PA[i][j]; Kn[j] /= den; }
+    const Pn = [];
+    for (let i = 0; i < S; i++) {
+      Pn.push(z()); Pn[i][i] = q[i];
+      for (let k = 0; k < S; k++) {
+        const a = Ad[k][i];
+        for (let j = 0; j < S; j++) Pn[i][j] += a * (PA[k][j] - PB[k] * Kn[j]);
+      }
+    }
+    let d = 0, m = 0;
+    for (let j = 0; j < S; j++) { d = Math.max(d, Math.abs(Kn[j] - K[j])); m = Math.max(m, Math.abs(Kn[j])); }
+    Pm = Pn; K = Kn;
+    if (d < 1e-10 * m) break;
+  }
+  return K;
+}
+
+function control(s, K) {
+  let u = 0;
+  for (let i = 0; i < s.length; i++) u -= K[i] * s[i];
+  return Math.max(-FMAX, Math.min(FMAX, u));
+}
+//CORE-END
+
+const $ = id => document.getElementById(id);
+const scene = $('cScene'), cE = $('cEnergy'), cF = $('cForce');
+const PUSH_DUR = 0.15, WIN = 10, FALL = 70 * Math.PI / 180;
+const LINK_VARS = ['--l1', '--l2', '--l3'];
+
+let P, K, Eup, s, t, hist, fallenAt, pushLeft = 0, pushF = 0, lastPushT = -9;
+let motorOn = true, paused = false, u = 0, col = {};
+
+function readColors() {
+  const cs = getComputedStyle(document.documentElement);
+  for (const k of ['bg', 'ink', 'muted', 'grid', 'axis', 'l1', 'l2', 'l3', 'motor', 'push', 'energy', 'cart', 'joint', 'ok', 'warn', 'bad'])
+    col[k] = cs.getPropertyValue('--' + k).trim();
+}
+readColors();
+matchMedia('(prefers-color-scheme: dark)').addEventListener('change', readColors);
+
+function setup(n) {
+  P = makeParams(n); K = lqr(P); Eup = energyUpright(P);
+  $('angles').innerHTML = P.l.map((_, j) => `<div class="t${j + 1}">θ<sub>${j + 1}</sub> = <span id="a${j}"></span></div>`).join('');
+  reset();
+}
+
+function reset() {
+  const N = P.n + 1;
+  s = new Array(2 * N).fill(0);
+  for (let j = 1; j < N; j++) s[j] = (Math.random() * 2 - 1) * INIT_TILT[P.n - 1] * Math.PI / 180;
+  t = 0; hist = []; fallenAt = null; pushLeft = 0; lastPushT = -9; u = 0;
+}
+
+function push(dir) {
+  if (fallenAt !== null) return;
+  pushF = dir * +$('rPush').value; pushLeft = PUSH_DUR;
+}
+
+function tick() {
+  const fallen = fallenAt !== null;
+  u = motorOn && !fallen ? control(s, K) : 0;
+  const p = pushLeft > 0 ? pushF : 0;
+  if (pushLeft > 0) { pushLeft -= DTC; lastPushT = t; }
+  s = stepCtrl(s, u + p, P);
+  const N = P.n + 1;
+  if (Math.abs(s[0]) > XMAX) { s[0] = Math.sign(s[0]) * XMAX; if (s[0] * s[N] > 0) s[N] = 0; }
+  t += DTC;
+  if (!fallen) for (let j = 1; j < N; j++) if (Math.abs(s[j]) > FALL) fallenAt = t;
+  hist.push([t, energy(s, P), u, p]);
+}
+
+function wrapDeg(a) {
+  let d = a * 180 / Math.PI % 360;
+  if (d > 180) d -= 360; else if (d <= -180) d += 360;
+  return d;
+}
+
+function statusOf() {
+  if (fallenAt !== null) return ['TOMBÉ', col.bad];
+  if (!motorOn) return ['MOTEUR COUPÉ', col.bad];
+  let mx = 0;
+  for (let j = 1; j <= P.n; j++) mx = Math.max(mx, Math.abs(s[j]));
+  if (mx > 0.5 * Math.PI / 180 || Math.abs(u) > 1.5 || t - lastPushT < 0.3) return ['RÉCUPÉRATION', col.ink];
+  return ['ÉQUILIBRE', col.ok];
+}
+
+function fit(c) {
+  const dpr = window.devicePixelRatio || 1, w = c.clientWidth, h = c.clientHeight;
+  if (c.width !== Math.round(w * dpr) || c.height !== Math.round(h * dpr)) { c.width = Math.round(w * dpr); c.height = Math.round(h * dpr); }
+  const ctx = c.getContext('2d');
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, w, h);
+  return [ctx, w, h];
+}
+
+function sceneScale() { return scene.clientWidth / (2 * (XMAX + 0.4)); }
+function sizeScene() { scene.style.height = Math.round(Math.max(280, Math.min(480, sceneScale() * 1.3 + 110))) + 'px'; }
+
+function drawScene() {
+  const [ctx, w, h] = fit(scene), sc = sceneScale(), cx = w / 2, gy = h - 44, X = x => cx + x * sc;
+  ctx.font = '12px -apple-system,Helvetica,Arial,sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+  ctx.strokeStyle = col.grid; ctx.fillStyle = col.muted; ctx.lineWidth = 1;
+  for (let m = -XMAX; m <= XMAX; m++) {
+    ctx.beginPath(); ctx.moveTo(X(m), 0); ctx.lineTo(X(m), h - 26); ctx.stroke();
+    ctx.fillText(sc > 150 ? m : m + ' m', X(m), h - 22);
+  }
+  if (sc > 150) ctx.fillText('POSITION (m)', cx + sc / 2, h - 22);
+  // rail et butées
+  const stop = XMAX + 0.12;
+  ctx.strokeStyle = col.axis; ctx.lineWidth = 3;
+  ctx.beginPath(); ctx.moveTo(0, gy); ctx.lineTo(w, gy);
+  for (const e of [-stop, stop]) { ctx.moveTo(X(e), gy); ctx.lineTo(X(e), gy - 14); }
+  ctx.stroke();
+  // chariot
+  const x = X(s[0]), cw = Math.max(34, sc * 0.2), ch = cw * 0.42, wr = cw * 0.13, top = gy - 2 * wr - ch;
+  ctx.fillStyle = col.cart;
+  ctx.beginPath(); ctx.moveTo(x - cw / 2, top); ctx.lineTo(x + cw / 2, top); ctx.lineTo(x + cw * 0.36, top + ch); ctx.lineTo(x - cw * 0.36, top + ch); ctx.closePath(); ctx.fill();
+  ctx.lineWidth = 2; ctx.strokeStyle = col.cart; ctx.fillStyle = col.bg;
+  for (const d of [-1, 1]) { ctx.beginPath(); ctx.arc(x + d * cw * 0.28, gy - wr - 1, wr, 0, 7); ctx.fill(); ctx.stroke(); }
+  // tiges
+  const pts = [[x, top + ch * 0.35]];
+  for (let j = 0; j < P.n; j++) {
+    const [px, py] = pts[j], L = P.l[j] * sc;
+    pts.push([px + L * Math.sin(s[j + 1]), py - L * Math.cos(s[j + 1])]);
+  }
+  ctx.lineCap = 'round'; ctx.lineWidth = Math.max(6, sc * 0.045);
+  for (let j = 0; j < P.n; j++) {
+    ctx.strokeStyle = col['l' + (j + 1)];
+    ctx.beginPath(); ctx.moveTo(...pts[j]); ctx.lineTo(...pts[j + 1]); ctx.stroke();
+  }
+  ctx.lineWidth = 2; ctx.strokeStyle = col.cart; ctx.fillStyle = col.joint;
+  for (const [px, py] of pts) { ctx.beginPath(); ctx.arc(px, py, Math.max(4, sc * 0.03), 0, 7); ctx.fill(); ctx.stroke(); }
+  // flèche de poussée
+  if (pushLeft > 0) {
+    const d = Math.sign(pushF), len = 14 + Math.abs(pushF) * 1.4, y = top + ch / 2, x1 = x - d * (cw / 2 + 6), x0 = x1 - d * len;
+    ctx.strokeStyle = ctx.fillStyle = col.push; ctx.lineWidth = 4;
+    ctx.beginPath(); ctx.moveTo(x0, y); ctx.lineTo(x1 - d * 6, y); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(x1, y); ctx.lineTo(x1 - d * 11, y - 7); ctx.lineTo(x1 - d * 11, y + 7); ctx.closePath(); ctx.fill();
+  }
+}
+
+function drawPlot(c, o) {
+  const [ctx, w, h] = fit(c), L = 46, R = 10, T = 8, B = 22;
+  const t0 = Math.max(0, t - WIN * 0.8), tx = v => L + (v - t0) / WIN * (w - L - R), ty = v => T + (o.max - v) / (o.max - o.min) * (h - T - B);
+  ctx.font = '12px -apple-system,Helvetica,Arial,sans-serif'; ctx.lineWidth = 1;
+  ctx.strokeStyle = col.axis; ctx.strokeRect(L, T, w - L - R, h - T - B);
+  ctx.fillStyle = col.muted; ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+  for (const v of o.ticks) { ctx.fillText(v, L - 6, ty(v)); ctx.beginPath(); ctx.moveTo(L - 3, ty(v)); ctx.lineTo(L, ty(v)); ctx.stroke(); }
+  ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+  for (let v = Math.ceil(t0 / 2) * 2; v <= t0 + WIN; v += 2) { ctx.fillText(v, tx(v), h - B + 5); ctx.beginPath(); ctx.moveTo(tx(v), h - B); ctx.lineTo(tx(v), h - B + 3); ctx.stroke(); }
+  ctx.save(); ctx.translate(11, T + (h - T - B) / 2); ctx.rotate(-Math.PI / 2); ctx.textBaseline = 'middle'; ctx.fillText(o.label, 0, 0); ctx.restore();
+  ctx.save(); ctx.beginPath(); ctx.rect(L, T, w - L - R, h - T - B); ctx.clip();
+  ctx.setLineDash([5, 4]); ctx.strokeStyle = col.muted;
+  for (const v of o.dashed) { ctx.beginPath(); ctx.moveTo(L, ty(v)); ctx.lineTo(w - R, ty(v)); ctx.stroke(); }
+  ctx.setLineDash([]); ctx.lineWidth = 2; ctx.lineJoin = 'round';
+  for (const [idx, color] of o.series) {
+    ctx.strokeStyle = color; ctx.beginPath();
+    let first = true;
+    for (const p of hist) {
+      if (p[0] < t0) continue;
+      const y = ty(Math.max(o.min, Math.min(o.max, p[idx])));
+      first ? ctx.moveTo(tx(p[0]), y) : ctx.lineTo(tx(p[0]), y); first = false;
+    }
+    ctx.stroke();
+    if (hist.length) { const p = hist[hist.length - 1]; ctx.fillStyle = color; ctx.beginPath(); ctx.arc(tx(p[0]), ty(Math.max(o.min, Math.min(o.max, p[idx]))), 3.5, 0, 7); ctx.fill(); }
+  }
+  ctx.restore();
+  ctx.textAlign = 'left'; ctx.textBaseline = 'top'; ctx.font = '600 12px -apple-system,Helvetica,Arial,sans-serif';
+  let lx = L + 8;
+  for (const [text, color] of o.legend) { ctx.fillStyle = color; ctx.fillText(text, lx, T + 5); lx += ctx.measureText(text).width + 16; }
+}
+
+function niceTicks(max) {
+  const step = max > 40 ? 20 : max > 16 ? 10 : max > 8 ? 5 : 2, out = [];
+  for (let v = 0; v <= max; v += step) out.push(v);
+  return out;
+}
+
+function render() {
+  const [txt, c] = statusOf();
+  $('status').textContent = txt; $('status').style.color = c;
+  $('clock').textContent = t.toFixed(2) + ' s';
+  for (let j = 0; j < P.n; j++) { const d = wrapDeg(s[j + 1]); $('a' + j).textContent = (d >= 0 ? '+' : '−') + Math.abs(d).toFixed(1) + '°'; }
+  drawScene();
+  const t0 = Math.max(0, t - WIN * 0.8);
+  let emax = Eup * 1.8;
+  for (const p of hist) if (p[0] >= t0 && p[1] > emax) emax = p[1];
+  emax *= 1.08;
+  drawPlot(cE, { min: -emax * 0.04, max: emax, ticks: niceTicks(emax), dashed: [Eup], label: 'ÉNERGIE (J)', series: [[1, col.energy]], legend: [['énergie ' + (hist.length ? hist[hist.length - 1][1].toFixed(1) : '0.0') + ' J', col.energy]] });
+  const pm = Math.max(60, +$('rPush').value + 10);
+  drawPlot(cF, { min: -pm, max: pm, ticks: [-40, -20, 0, 20, 40], dashed: [-FMAX, FMAX], label: 'FORCE (N)', series: [[3, col.push], [2, col.motor]],
+    legend: [['moteur ' + (u >= 0 ? '+' : '−') + Math.abs(u).toFixed(1) + ' N', col.motor], ['poussée ' + (pushLeft > 0 ? (pushF > 0 ? '+' : '−') + Math.abs(pushF).toFixed(0) : '0') + ' N', col.push]] });
+}
+
+let prev = null, acc = 0;
+function frame(now) {
+  if (prev !== null && !paused) {
+    acc += Math.min(0.05, (now - prev) / 1000);
+    while (acc >= DTC) { tick(); acc -= DTC; }
+    const t0 = Math.max(0, t - WIN * 0.8) - 0.5;
+    if (hist.length && hist[0][0] < t0 - 2) hist = hist.filter(p => p[0] >= t0);
+    if (fallenAt !== null && motorOn && t - fallenAt > 2.5) reset();
+  }
+  prev = now;
+  render();
+  requestAnimationFrame(frame);
+}
+
+$('bL').onclick = () => push(-1);
+$('bR').onclick = () => push(1);
+$('rPush').oninput = e => $('oPush').textContent = e.target.value + ' N';
+$('sN').onchange = e => setup(+e.target.value);
+$('bReset').onclick = reset;
+$('bPause').onclick = e => { paused = !paused; e.target.textContent = paused ? 'Reprendre' : 'Pause'; };
+$('bMotor').onclick = e => {
+  motorOn = !motorOn;
+  e.target.textContent = 'Moteur : ' + (motorOn ? 'ON' : 'OFF'); e.target.setAttribute('aria-pressed', motorOn);
+  if (motorOn && fallenAt !== null) reset();
+};
+scene.addEventListener('pointerdown', e => {
+  const r = scene.getBoundingClientRect(), xc = r.width / 2 + s[0] * sceneScale();
+  push(e.clientX - r.left < xc ? 1 : -1);
+});
+addEventListener('keydown', e => {
+  if (e.repeat || /INPUT|SELECT/.test(e.target.tagName)) return;
+  if (e.key === 'ArrowLeft') { push(-1); e.preventDefault(); }
+  else if (e.key === 'ArrowRight') { push(1); e.preventDefault(); }
+  else if (e.key === 'r' || e.key === 'R') reset();
+});
+addEventListener('resize', sizeScene);
+
+sizeScene();
+setup(3);
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
