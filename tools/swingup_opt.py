@@ -12,7 +12,7 @@ import numpy as np
 G, DT, H_STEPS, H = 9.81, 0.001, 20, 0.02
 M, m, l, b, bc = 1.0, 0.2, 0.28, 0.002, 0.3
 U_MAX, X_MAX = 26.0, 1.4          # margins below the real ±40 N and ±2 m, left for feedback
-HORIZON = {1: 2.0, 2: 3.0, 3: 3.6}
+HORIZON = {1: 2.0, 2: 3.0, 3: 3.6, 4: 4.2}
 
 
 def make_step(n):

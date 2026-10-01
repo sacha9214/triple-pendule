@@ -46,7 +46,7 @@ function simulate(P, C, s, T, pushes = []) {
   return null;
 }
 let seed = 1; const rnd = () => (seed = seed * 16807 % 2147483647) / 2147483647;
-for (const n of [1, 2, 3]) {
+for (const n of [1, 2, 3, 4]) {
   const P = makeParams(n), C = makeController(P), N = n + 1;
   if (!C.swing) { console.log(`--   n=${n} pas de trajectoire de remontée`); continue; }
   const hang = new Array(2 * N).fill(0); for (let j = 1; j < N; j++) hang[j] = Math.PI;
